@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Smart Home Monitor</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">IoT + CLOUD COMPUTING MINI PROJECT</p>
+      <h1>Smart Home Monitor</h1>
+      <p class="subtitle">Monitor your environment and manage simulated smart lights.</p>
+    </div>
+    <div class="status"><span class="pulse"></span> System online</div>
+  </header>
+
+  <main>
+    <section class="metrics">
+      <article class="metric-card">
+        <div class="metric-icon warm">🌡️</div>
+        <p class="metric-label">Temperature</p>
+        <div class="metric-value"><span id="temperature">--</span><small>°C</small></div>
+        <p class="metric-note" id="temperature-note">Waiting for sensor data</p>
+      </article>
+      <article class="metric-card">
+        <div class="metric-icon cool">💧</div>
+        <p class="metric-label">Humidity</p>
+        <div class="metric-value"><span id="humidity">--</span><small>%</small></div>
+        <p class="metric-note">Relative humidity</p>
+      </article>
+      <article class="metric-card">
+        <div class="metric-icon green">☁️</div>
+        <p class="metric-label">Cloud connection</p>
+        <div class="metric-value compact" id="cloud-status">Connected</div>
+        <p class="metric-note">Flask API responding</p>
+      </article>
+    </section>
+
+    <section class="content-grid">
+      <article class="panel">
+        <div class="panel-heading">
+          <div><h2>Environment history</h2><p>Latest simulated sensor readings</p></div>
+          <span class="live-tag">● LIVE DEMO</span>
+        </div>
+        <canvas id="chart" height="220" aria-label="Temperature and humidity history chart"></canvas>
+        <div class="legend"><span><i class="temp-dot"></i> Temperature (°C)</span><span><i class="humidity-dot"></i> Humidity (%)</span></div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-heading"><div><h2>Smart devices</h2><p>Switches are simulated in software</p></div></div>
+        <div id="devices" class="device-list"><p class="muted">Loading devices…</p></div>
+        <div class="notice"><strong>Demo mode:</strong> These controls change database state only. No real electrical devices are connected.</div>
+      </article>
+    </section>
+
+    <section class="panel alert-panel">
+      <div class="panel-heading"><div><h2>Home alerts</h2><p>Automatic checks based on the latest reading</p></div></div>
+      <div id="alert" class="alert neutral">Waiting for sensor data…</div>
+    </section>
+    <p class="footer-note">Student mini-project · Python · Flask · SQLite · HTML/CSS/JavaScript</p>
+  </main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let readings = [];
+
+async function api(url, options = {}) {
+  const response = await fetch(url, {
+    headers: {"Content-Type": "application/json"},
+    ...options
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || "Request failed");
+  return result;
+}
+
+async function simulateSensor() {
+  // Software sensor simulator: replace this function with actual ESP32 sensor data later.
+  const temperature = +(24 + Math.random() * 12).toFixed(1);
+  const humidity = Math.round(35 + Math.random() * 45);
+  try {
+    await api("/api/readings", {
+      method: "POST",
+      body: JSON.stringify({temperature, humidity})
+    });
+    $("cloud-status").textContent = "Connected";
+    await refreshReadings();
+  } catch (error) {
+    $("cloud-status").textContent = "Offline";
+    $("alert").className = "alert warning";
+    $("alert").textContent = "Could not send sensor data: " + error.message;
+  }
+}
+
+async function refreshReadings() {
+  readings = await api("/api/readings");
+  if (!readings.length) return;
+  const latest = readings[readings.length - 1];
+  $("temperature").textContent = Number(latest.temperature).toFixed(1);
+  $("humidity").textContent = Math.round(latest.humidity);
+  $("temperature-note").textContent = Number(latest.temperature) >= 32 ? "High temperature" : "Within demo range";
+  if (Number(latest.temperature) >= 32) {
+    $("alert").className = "alert warning";
+    $("alert").textContent = "⚠️ High temperature detected. Check room ventilation.";
+  } else if (Number(latest.humidity) >= 70) {
+    $("alert").className = "alert warning";
+    $("alert").textContent = "⚠️ Humidity is high. Consider checking ventilation.";
+  } else {
+    $("alert").className = "alert good";
+    $("alert").textContent = "✓ Environment readings are within the configured demo limits.";
+  }
+  drawChart();
+}
+
+function drawChart() {
+  const canvas = $("chart");
+  const ctx = canvas.getContext("2d");
+  const ratio = window.devicePixelRatio || 1;
+  const width = canvas.clientWidth;
+  const height = 220;
+  canvas.width = width * ratio;
+  canvas.height = height * ratio;
+  ctx.scale(ratio, ratio);
+  ctx.clearRect(0, 0, width, height);
+  const pad = {left: 34, right: 14, top: 18, bottom: 25};
+  const w = width - pad.left - pad.right;
+  const h = height - pad.top - pad.bottom;
+  ctx.strokeStyle = "#e8edf4";
+  ctx.fillStyle = "#7b8798";
+  ctx.font = "11px system-ui";
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.top + h * i / 4;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(width-pad.right, y); ctx.stroke();
+    ctx.fillText(String(40 - i * 10), 5, y + 4);
+  }
+  if (readings.length < 2) {
+    ctx.fillText("Collecting readings…", pad.left + 8, pad.top + 24);
+    return;
+  }
+  function line(key, color, min, max) {
+    ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 2.5;
+    readings.forEach((r, i) => {
+      const x = pad.left + (readings.length === 1 ? 0 : i / (readings.length - 1)) * w;
+      const val = Math.max(min, Math.min(max, Number(r[key])));
+      const y = pad.top + h - ((val - min) / (max - min)) * h;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+  line("temperature", "#e58a35", 0, 40);
+  line("humidity", "#3186d8", 0, 100);
+}
+
+async function loadDevices() {
+  const devices = await api("/api/devices");
+  $("devices").innerHTML = "";
+  devices.forEach(device => {
+    const row = document.createElement("div");
+    row.className = "device-row";
+    const info = document.createElement("div");
+    info.className = "device-info";
+    const icon = document.createElement("div");
+    icon.className = "device-icon";
+    icon.textContent = "💡";
+    const words = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = device.name;
+    const state = document.createElement("p");
+    state.className = "device-state";
+    state.textContent = device.is_on ? "Currently on" : "Currently off";
+    words.append(name, state);
+    info.append(icon, words);
+    const button = document.createElement("button");
+    button.className = "toggle " + (device.is_on ? "is-on" : "");
+    button.textContent = device.is_on ? "ON" : "OFF";
+    button.setAttribute("aria-label", "Toggle " + device.name);
+    button.onclick = async () => {
+      try {
+        await api("/api/devices/" + encodeURIComponent(device.name), {
+          method: "POST", body: JSON.stringify({is_on: !device.is_on})
+        });
+        await loadDevices();
+      } catch (e) { alert(e.message); }
+    };
+    row.append(info, button);
+    $("devices").append(row);
+  });
+}
+
+async function start() {
+  try {
+    await loadDevices();
+    // Seed a first reading immediately, then refresh every 5 seconds.
+    await simulateSensor();
+    setInterval(simulateSensor, 5000);
+  } catch (error) {
+    $("cloud-status").textContent = "Offline";
+    $("alert").className = "alert warning";
+    $("alert").textContent = "Could not connect to the Flask API. Refresh the page or restart the app.";
+  }
+}
+window.addEventListener("resize", drawChart);
+start();
+</script>
+</body>
+</html>
